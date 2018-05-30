@@ -1,6 +1,7 @@
 from setuptools import setup, Extension, find_packages
-
 import numpy
+
+__version__ = "1.1.2"
 
 # define the extension module
 extensions = []
@@ -20,10 +21,10 @@ setup(name='sstmap',
       author='Kamran Haider',
       author_email='kamranhaider.mb@gmail.com',
       description='SSTMap: A computational tool for studying structure and thermodynamics of water molecules on solute surfaces',
-      version='1.0',
-      license='LGPLv2.1+',
+      version=__version__,
+      license='MIT',
       url='https://github.com/KurtzmanLab/SSTMap',
-      platforms=['Linux', 'Mac OS X', 'Windows'],
+      platforms=['Linux', 'Mac OS X',],
       packages=find_packages(),
       ext_modules=extensions,
       zip_safe=False,

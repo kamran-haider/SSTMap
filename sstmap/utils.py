@@ -30,22 +30,14 @@ import sys
 import os
 import time
 from functools import wraps
-import _sstmap_ext as calc
 
 import numpy as np
 from scipy import stats
-import mdtraj as md
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from matplotlib import rcParams
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib.ticker import LinearLocator, FormatStrFormatter
 from matplotlib import cm
-
-#rcParams['font.family'] = 'serif'
-#rcParams['font.serif'] = ['Cambria Math'] + rcParams['font.serif']
 
 ##############################################################################
 # Utilities
@@ -405,7 +397,6 @@ def write_watpdb_from_list(coords, filename, water_id_list, full_water_res=False
     #np.savetxt(filename + ".pdb", np.asarray(pdb_lines), fmt="%s")
 
 
-
 def write_watpdb_from_coords(filename, coords, full_water_res=False):
     """Summary
     
@@ -502,141 +493,94 @@ def write_watpdb_from_coords(filename, coords, full_water_res=False):
     
     """
 
-class NeighborSearch(object):
-    """
-    Class for relatively fast queries of coordinates within a distance
-    of specified coordinate. 
-    """
-    def __init__(self, xyz, dist):
-        """Initialize a NeighborSearch object by providing an array of
-        coordinates and a distance threshold.
+class GISTFields:
+    data_titles = ['index', 'x', 'y', 'z',
+                  'N_wat', 'g_O', 'g_H',
+                  'TS_tr_dens', 'TS_tr_norm',
+                  'TS_or_dens', 'TS_or_norm',
+                  'dTSsix-dens', 'dTSsix_norm',
+                  'E_sw_dens', 'E_sw_norm', 'E_ww_dens', 'Eww_norm',
+                  'E_ww_nbr_dens', 'E_ww_nbr_norm',
+                  'N_nbr_dens', 'N_nbr_norm',
+                  'f_hb_dens', 'f_hb_norm',
+                  'N_hb_sw_dens', 'N_hb_sw_norm', 'N_hb_ww_dens', 'N_hb_ww_norm',
+                  'N_don_sw_dens', 'N_don_sw_norm', 'N_acc_sw_dens', 'N_acc_sw_norm',
+                  'N_don_ww_dens', 'N_don_ww_norm', 'N_acc_ww_dens', 'N_acc_ww_norm']
+    index = 0
+    x = 1
+    y = 2
+    z = 3
+    N_wat = 4
+    g_O = 5
+    g_H = 6
+    TS_tr_dens = 7
+    TS_tr_norm = 8
+    TS_or_dens = 9
+    TS_or_norm = 10
+    dTSsix_dens = 11
+    dTSsix_norm = 12
+    E_sw_dens = 13
+    E_sw_norm = 14
+    E_ww_dens = 15
+    Eww_norm = 16
+    E_ww_nbr_dens = 17
+    E_ww_nbr_norm = 18
+    N_nbr_dens = 19
+    N_nbr_norm = 20
+    f_hb_dens = 21
+    f_hb_norm = 22
+    N_hb_sw_dens = 23
+    N_hb_sw_norm = 24
+    N_hb_ww_dens = 25
+    N_hb_ww_norm = 26
+    N_don_sw_dens = 27
+    N_don_sw_norm = 28
+    N_acc_sw_dens = 29
+    N_acc_sw_norm = 30
+    N_don_ww_dens = 31
+    N_don_ww_norm = 32
+    N_acc_ww_dens = 33
+    N_acc_ww_norm = 34
 
-        Parameters
-        ----------
-        xyz : np.ndarray, float, shape=(N, 3)
-            A multidmimensional array of three dimensional coordinates
-        dist : float
-            A distance cutoff to identify points within this distance of the
-            query point.
-        """
-        # create an array of indices around a cubic grid
-        self.neighbors = []
-        for i in (-1, 0, 1):
-            for j in (-1, 0, 1):
-                for k in (-1, 0, 1):
-                    self.neighbors.append((i, j, k))
-        self.neighbor_array = np.array(self.neighbors, np.int)
-
-        self.min_ = np.min(xyz, axis=0)
-        self.cell_size = np.array([dist, dist, dist], np.float)
-        cell = np.array((xyz - self.min_) / self.cell_size)  # , dtype=np.int)
-        # create a dictionary with keys corresponding to integer representation
-        # of transformed XYZ's
-        self.cells = {}
-        for ix, assignment in enumerate(cell):
-            # convert transformed xyz coord into integer index (so coords like
-            # 1.1 or 1.9 will go to 1)
-            indices = assignment.astype(int)
-            # create interger indices
-            t = tuple(indices)
-
-            # NOTE: a single index can have multiple coords associated with it
-            # if this integer index is already present
-            if t in self.cells:
-                # obtain its value (which is a list, see below)
-                xyz_list, trans_coords, ix_list = self.cells[t]
-                # append new xyz to xyz list associated with this entry
-                xyz_list.append(xyz[ix])
-                # append new transformed xyz to transformed xyz list associated
-                # with this entry
-                trans_coords.append(assignment)
-                # append new array index
-                ix_list.append(ix)
-            # if this integer index is encountered for the first time
-            else:
-                # create a dictionary key value pair,
-                # key: integer index
-                # value: [[list of x,y,z], [list of transformed x,y,z], [list
-                # of array indices]]
-                self.cells[t] = ([xyz[ix]], [assignment], [ix])
-
-        self.dist_squared = dist * dist
-
-    def query_nbrs_single_point(self, point):
-        """
-        Given a coordinate point, return all point indexes (0-indexed) that
-        are within the threshold distance from it.
-        """
-        cell0 = np.array((point - self.min_) / self.cell_size, dtype=np.int)
-        tuple0 = tuple(cell0)
-        near = []
-        for index_array in tuple0 + self.neighbor_array:
-            t = tuple(index_array)
-            if t in self.cells:
-                xyz_list, trans_xyz_list, ix_list = self.cells[t]
-                for (xyz, ix) in zip(xyz_list, ix_list):
-                    diff = xyz - point
-                    if np.dot(diff, diff) <= self.dist_squared and float(
-                            np.dot(diff, diff)) > 0.0:
-                        # near.append(ix)
-                        # print ix, np.dot(diff, diff)
-                        near.append(ix)
-        return near
-
-    def query_point_and_distance(self, point):
-        """
-        Given a coordinate point, return all point indexes (0-indexed) and 
-        corresponding distances that are within the threshold distance from it.
-        """
-        cell0 = np.array((point - self.min_) / self.cell_size, dtype=np.int)
-        tuple0 = tuple(cell0)
-        near = []
-        for index_array in tuple0 + self.neighbor_array:
-            t = tuple(index_array)
-            if t in self.cells:
-                xyz_list, trans_xyz_list, ix_list = self.cells[t]
-                for (xyz, ix) in zip(xyz_list, ix_list):
-                    diff = xyz - point
-                    if np.dot(diff, diff) <= self.dist_squared and float(
-                            np.dot(diff, diff)) > 0.0:
-                        # near.append(ix)
-                        # print ix, np.dot(diff, diff)
-                        near.append((ix, np.sqrt(np.dot(diff, diff))))
-        return near
-
-    def query_nbrs_multiple_points(self, points):
-        """
-        Given a coordinate point, return all point indexes (0-indexed) that
-        are within the threshold distance from it.
-        shape of points has to be (n_lig_atoms, 3)
-        """
-        near = []
-        for point in points:
-            cell0 = np.array(
-                (point - self.min_) / self.cell_size, dtype=np.int)
-            tuple0 = tuple(cell0)
-
-            for index_array in tuple0 + self.neighbor_array:
-                t = tuple(index_array)
-                if t in self.cells:
-                    xyz_list, trans_xyz_list, ix_list = self.cells[t]
-                    for (xyz, ix) in zip(xyz_list, ix_list):
-                        diff = xyz - point
-                        if np.dot(diff, diff) <= self.dist_squared and float(
-                                np.dot(diff, diff)) > 0.0:
-                            # near.append(ix)
-                            # print ix, np.dot(diff, diff)
-                            if ix not in near:
-                                near.append(ix)
-        return near
-
-
-
-def main():
-    #plot_enbr_distribution("test_1_hsa_data", site_indices=[1, 3], nbr_norm=True)
-    plot_rtheta_distribution(
-        "test_1_angular_structure_data", site_indices=[1, 3])
-
-
-if __name__ == '__main__':
-    main()
+class HSAFields:
+    data_titles = ['index', 'x', 'y', 'z',
+                  'N_wat', 'g_O', 'g_H',
+                  'TS_tr_dens', 'TS_tr_norm',
+                  'TS_or_dens', 'TS_or_norm',
+                  'dTSsix-dens', 'dTSsix_norm',
+                  'E_sw_dens', 'E_sw_norm', 'E_ww_dens', 'Eww_norm',
+                  'E_ww_nbr_dens', 'E_ww_nbr_norm',
+                  'N_nbr_dens', 'N_nbr_norm',
+                  'f_hb_dens', 'f_hb_norm',
+                  'N_hb_sw_dens', 'N_hb_sw_norm', 'N_hb_ww_dens', 'N_hb_ww_norm',
+                  'N_don_sw_dens', 'N_don_sw_norm', 'N_acc_sw_dens', 'N_acc_sw_norm',
+                  'N_don_ww_dens', 'N_don_ww_norm', 'N_acc_ww_dens', 'N_acc_ww_norm']
+    index = 0
+    x = 1
+    y = 2
+    z = 3
+    nwat = 4
+    occupancy = 5
+    Esw = 6
+    EswLJ = 7
+    EswElec = 8
+    Eww = 9
+    EwwLJ = 10
+    EwwElec = 11
+    Etot = 12
+    Ewwnbr = 13
+    TSsw_trans = 14
+    TSsw_orient = 15
+    TStot = 16
+    Nnbrs = 17
+    Nhbww = 18
+    Nhbsw = 19
+    Nhbtot = 20
+    f_hb_ww = 21
+    f_enc = 22
+    Acc_ww = 23
+    Don_ww = 24
+    Acc_sw = 25
+    Don_sw = 26
+    solute_acceptors = 27
+    solute_donors = 28
